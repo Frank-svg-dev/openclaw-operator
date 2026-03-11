@@ -1,0 +1,27 @@
+apiVersion: openclaw.io/v1
+kind: Openclaw
+metadata:
+  name: openclaw-sample
+  namespace: openclaw
+spec:
+  image: 10.29.231.164/ghcr.m.daocloud.io/openclaw/openclaw:latest
+  replicas: 1
+  serviceType: ClusterIP
+  gatewayPort: 18789
+  gatewayBind: lan
+  customApiKey: "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi"
+  customBaseUrl: "https://cdn.12ai.org/v1"
+  customModelId: "qwen3.5-plus"
+  customProviderId: "ppnb"
+  customCompatibility: openai
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    storage: 20Gi
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
