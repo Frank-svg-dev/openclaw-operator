@@ -1,0 +1,27 @@
+FROM docker.m.daocloud.io/library/golang:1.25-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+ENV GOPROXY=https://goproxy.cn,direct
+RUN go mod download
+
+COPY cmd/config-reloader/main.go ./
+
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o config-reloader main.go
+
+FROM docker.m.daocloud.io/library/alpine:latest
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /app
+
+COPY --from=builder /app/config-reloader .
+
+RUN addgroup -g 1000 node && \
+    adduser -D -u 1000 -G node node && \
+    chown -R node:node /app
+
+USER node
+
+CMD ["./config-reloader"]

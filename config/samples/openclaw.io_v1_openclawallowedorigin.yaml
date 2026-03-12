@@ -1,0 +1,32 @@
+apiVersion: openclaw.io/v1
+kind: OpenClawAllowedOrigin
+metadata:
+  name: openclaw-ui-public-sss
+  namespace: test
+spec:
+  openclawRef:
+    name: openclaw-sample
+  origin: "http://127.0.0.1:18789"
+  enabled: true
+---
+apiVersion: openclaw.io/v1
+kind: OpenClawAllowedOrigin
+metadata:
+  name: openclaw-ui-public
+  namespace: test
+spec:
+  openclawRef:
+    name: openclaw-sample
+  origin: "http://localhost:18789"
+  enabled: true
+---
+apiVersion: openclaw.io/v1
+kind: OpenClawAllowedOrigin
+metadata:
+  name: openclaw-ui-external
+  namespace: test
+spec:
+  openclawRef:
+    name: openclaw-sample
+  origin: "https://test.sssopenclaw.example.com"
+  enabled: true

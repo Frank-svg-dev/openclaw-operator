@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: feishu-secret
+  namespace: test
+type: Opaque
+stringData:
+  appId: "cli_a92510a7a3f99cb3"
+  appSecret: "eO8qrwH4JDW0eAdzaLQdcgaJO3qjJ6u5"
+---
+apiVersion: openclaw.io/v1
+kind: OpenClawChannel
+metadata:
+  name: feishu-main
+  namespace: test
+spec:
+  openclawRef:
+    name: openclaw-sample
+  type: feishu
+  enabled: true
+  accountName: main
+  dmPolicy: pairing
+  botName: "巴尔坦星人"
+  requireMention: "open"
+  groupPolicy: "open"
+  groups:
+    oc_532044075a61d112f04fa63109c75e9b:
+      requireMention: true
+  secretRefs:
+    appId:
+      name: feishu-secret
+      key: appId
+    appSecret:
+      name: feishu-secret
+      key: appSecret

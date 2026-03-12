@@ -19,9 +19,17 @@ run: ## Run a controller from your host.
 docker-build: ## Build docker image with the manager.
 	docker build -t ${IMG} .
 
+.PHONY: docker-build-reloader
+docker-build-reloader: ## Build docker image with the config-reloader.
+	docker build -f Dockerfile.config-reloader -t openclaw-config-reloader:latest .
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	docker push ${IMG}
+
+.PHONY: docker-push-reloader
+docker-push-reloader: ## Push docker image with the config-reloader.
+	docker push openclaw-config-reloader:latest
 
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the platform specified by PLATFORMS.

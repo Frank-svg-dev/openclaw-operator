@@ -471,6 +471,33 @@ exec openclaw gateway`,
 								},
 							},
 						},
+						{
+							Name:            "config-reloader",
+							Image:           "10.29.231.164/ghcr.m.daocloud.io/openclaw/config-reloader:v0.6",
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							SecurityContext: &corev1.SecurityContext{
+								RunAsNonRoot:             func(b bool) *bool { return &b }(true),
+								RunAsUser:                func(i int64) *int64 { return &i }(1000),
+								AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "data",
+									MountPath: "/home/node/.openclaw",
+								},
+								{
+									Name:      "allowed-origins",
+									MountPath: "/etc/openclaw-config/allowed-origins",
+								},
+								{
+									Name:      "channels",
+									MountPath: "/etc/openclaw-config/channels",
+								},
+							},
+						},
 					},
 					Volumes: []corev1.Volume{
 						{
@@ -478,6 +505,28 @@ exec openclaw gateway`,
 							VolumeSource: corev1.VolumeSource{
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 									ClaimName: m.Name + "-data",
+								},
+							},
+						},
+						{
+							Name: "allowed-origins",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: m.Name + "-allowed-origins",
+									},
+									Optional: func() *bool { b := true; return &b }(),
+								},
+							},
+						},
+						{
+							Name: "channels",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: m.Name + "-channels",
+									},
+									Optional: func() *bool { b := true; return &b }(),
 								},
 							},
 						},

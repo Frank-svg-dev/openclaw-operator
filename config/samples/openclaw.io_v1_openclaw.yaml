@@ -2,7 +2,7 @@ apiVersion: openclaw.io/v1
 kind: Openclaw
 metadata:
   name: openclaw-sample
-  namespace: openclaw
+  namespace: test
 spec:
   image: 10.29.231.164/ghcr.m.daocloud.io/openclaw/openclaw:latest
   replicas: 1
