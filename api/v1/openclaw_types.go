@@ -20,6 +20,7 @@ type OpenclawSpec struct {
 	CustomCompatibility string               `json:"customCompatibility,omitempty"`
 	GatewayPort         int32                `json:"gatewayPort,omitempty"`
 	GatewayBind         string               `json:"gatewayBind,omitempty"`
+	Privacy             *bool                `json:"privacy,omitempty"`
 }
 
 type StorageSpec struct {

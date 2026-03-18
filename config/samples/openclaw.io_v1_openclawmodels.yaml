@@ -1,0 +1,44 @@
+apiVersion: openclaw.io/v1
+kind: OpenClawModels
+metadata:
+  name: openclaw-agent-test-models
+  namespace: kkk
+spec:
+  openclawRef:
+    name: openclaw-agent-test
+  mode: "merge"
+  providers:
+    - name: "ppnb"
+      api: "openai-completions"
+      apiKey: "CUSTOM_API_KEY"
+      baseUrl: "https://cdn.12ai.org/v1"
+      models:
+        - contextWindow: 16000
+          cost:
+            cacheRead: 0
+            cacheWrite: 0
+            input: 0
+            output: 0
+          id: "qwen3.5-plus"
+          input:
+            - "text"
+          maxTokens: 4096
+          name: "qwen3.5-plus"
+          reasoning: false
+    - name: "zai"
+      api: "openai-completions"
+      apiKey: "CUSTOM_API_KEY"
+      baseUrl: "https://cdn.12ai.org/v1"
+      models:
+        - contextWindow: 16000
+          cost:
+            cacheRead: 0
+            cacheWrite: 0
+            input: 0
+            output: 0
+          id: "glm-5"
+          input:
+            - "text"
+          maxTokens: 4096
+          name: "GLM-5"
+          reasoning: false

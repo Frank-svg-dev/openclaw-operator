@@ -115,6 +115,34 @@ rules:
   - update
   - watch
 - apiGroups:
+  - openclaw.io
+  resources:
+  - openclawagentdefaults
+  - openclawagentdefaults/status
+  - openclawagentdefaults/finalizers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - openclaw.io
+  resources:
+  - openclawagents
+  - openclawagents/status
+  - openclawagents/finalizers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - coordination.k8s.io
   resources:
   - leases

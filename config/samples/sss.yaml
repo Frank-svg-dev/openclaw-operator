@@ -1,0 +1,11 @@
+apiVersion: openclaw.io/v1
+kind: OpenClawAllowedOrigin
+metadata:
+  name: openclaw-agent-test-ui-external
+  namespace: kkk
+spec:
+  openclawRef:
+    name: openclaw-agent-test
+  origin: "http://10.29.231.160:30292"
+  enabled: true
+  useHTTP: true

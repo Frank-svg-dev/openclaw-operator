@@ -9,6 +9,7 @@ type OpenClawAllowedOriginSpec struct {
 	OpenclawRef OpenclawRef `json:"openclawRef"`
 	Origin      string      `json:"origin"`
 	Enabled     bool        `json:"enabled"`
+	UseHTTP     bool        `json:"useHTTP,omitempty"`
 }
 
 type OpenclawRef struct {
@@ -23,9 +24,9 @@ type OpenClawAllowedOriginStatus struct {
 type OpenClawAllowedOriginPhase string
 
 const (
-	OpenClawAllowedOriginPhasePending  OpenClawAllowedOriginPhase = "Pending"
-	OpenClawAllowedOriginPhaseReady    OpenClawAllowedOriginPhase = "Ready"
-	OpenClawAllowedOriginPhaseError    OpenClawAllowedOriginPhase = "Error"
+	OpenClawAllowedOriginPhasePending OpenClawAllowedOriginPhase = "Pending"
+	OpenClawAllowedOriginPhaseReady   OpenClawAllowedOriginPhase = "Ready"
+	OpenClawAllowedOriginPhaseError   OpenClawAllowedOriginPhase = "Error"
 )
 
 type OpenClawAllowedOrigin struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -19,6 +20,8 @@ import (
 
 	openclawiov1 "github.com/Frank-svg-dev/openclaw-operator/api/v1"
 )
+
+const openclawFinalizer = "openclaw.io/finalizer"
 
 type OpenclawReconciler struct {
 	client.Client
@@ -37,6 +40,27 @@ func (r *OpenclawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 		logger.Error(err, "Failed to get Openclaw resource.")
 		return ctrl.Result{}, err
+	}
+
+	if openclaw.ObjectMeta.DeletionTimestamp != nil {
+		if containsOpenClawString(openclaw.ObjectMeta.Finalizers, openclawFinalizer) {
+			logger.Info("Deleting OpenClaw, cleaning up all related resources", "name", openclaw.Name)
+			if err := r.deleteAllRelatedResources(ctx, openclaw); err != nil {
+				return ctrl.Result{}, err
+			}
+			openclaw.ObjectMeta.Finalizers = removeOpenClawString(openclaw.ObjectMeta.Finalizers, openclawFinalizer)
+			if err := r.Update(ctx, openclaw); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if !containsOpenClawString(openclaw.ObjectMeta.Finalizers, openclawFinalizer) {
+		openclaw.ObjectMeta.Finalizers = append(openclaw.ObjectMeta.Finalizers, openclawFinalizer)
+		if err := r.Update(ctx, openclaw); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	secret := r.secretForOpenclaw(openclaw)
@@ -139,6 +163,12 @@ func (r *OpenclawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
+	err = r.createDefaultResources(ctx, openclaw)
+	if err != nil {
+		logger.Error(err, "Failed to create default resources.")
+		return ctrl.Result{}, err
+	}
+
 	openclaw.Status.Replicas = *stsFound.Spec.Replicas
 	openclaw.Status.ReadyReplicas = stsFound.Status.ReadyReplicas
 	if stsFound.Status.ReadyReplicas == *replicas {
@@ -164,6 +194,7 @@ func (r *OpenclawReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
 		Complete(r)
 }
 
@@ -496,6 +527,14 @@ exec openclaw gateway`,
 									Name:      "channels",
 									MountPath: "/etc/openclaw-config/channels",
 								},
+								{
+									Name:      "agents",
+									MountPath: "/etc/openclaw-config/agents",
+								},
+								{
+									Name:      "models",
+									MountPath: "/etc/openclaw-config/models",
+								},
 							},
 						},
 					},
@@ -525,6 +564,28 @@ exec openclaw gateway`,
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: m.Name + "-channels",
+									},
+									Optional: func() *bool { b := true; return &b }(),
+								},
+							},
+						},
+						{
+							Name: "agents",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: m.Name + "-agents",
+									},
+									Optional: func() *bool { b := true; return &b }(),
+								},
+							},
+						},
+						{
+							Name: "models",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: m.Name + "-models",
 									},
 									Optional: func() *bool { b := true; return &b }(),
 								},
@@ -577,4 +638,400 @@ func getServiceType(t string) corev1.ServiceType {
 	default:
 		return corev1.ServiceTypeClusterIP
 	}
+}
+
+func (r *OpenclawReconciler) createDefaultResources(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
+	err := r.createDefaultAllowedOrigins(ctx, openclaw)
+	if err != nil {
+		return err
+	}
+
+	err = r.createDefaultAgentDefaults(ctx, openclaw)
+	if err != nil {
+		return err
+	}
+
+	err = r.createDefaultAgent(ctx, openclaw)
+	if err != nil {
+		return err
+	}
+
+	err = r.createDefaultModels(ctx, openclaw)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *OpenclawReconciler) deleteAllRelatedResources(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
+	logger := log.FromContext(ctx)
+	namespace := openclaw.Namespace
+	openclawName := openclaw.Name
+
+	logger.Info("Deleting all related resources for OpenClaw", "name", openclawName, "namespace", namespace)
+
+	if err := r.deleteOpenClawModels(ctx, namespace, openclawName); err != nil {
+		logger.Error(err, "Failed to delete OpenClawModels")
+		return err
+	}
+
+	if err := r.deleteOpenClawAgents(ctx, namespace, openclawName); err != nil {
+		logger.Error(err, "Failed to delete OpenClawAgents")
+		return err
+	}
+
+	if err := r.deleteOpenClawAgentDefaults(ctx, namespace, openclawName); err != nil {
+		logger.Error(err, "Failed to delete OpenClawAgentDefaults")
+		return err
+	}
+
+	if err := r.deleteOpenClawAllowedOrigins(ctx, namespace, openclawName); err != nil {
+		logger.Error(err, "Failed to delete OpenClawAllowedOrigins")
+		return err
+	}
+
+	logger.Info("All related resources deleted successfully", "name", openclawName)
+	return nil
+}
+
+func (r *OpenclawReconciler) deleteOpenClawModels(ctx context.Context, namespace, openclawName string) error {
+	modelsList := &openclawiov1.OpenClawModelsList{}
+	err := r.List(ctx, modelsList, client.InNamespace(namespace))
+	if err != nil {
+		return err
+	}
+
+	for _, models := range modelsList.Items {
+		if models.Spec.OpenclawRef.Name == openclawName {
+			if err := r.Delete(ctx, &models); err != nil {
+				if !errors.IsNotFound(err) {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (r *OpenclawReconciler) deleteOpenClawAgents(ctx context.Context, namespace, openclawName string) error {
+	agentList := &openclawiov1.OpenClawAgentList{}
+	err := r.List(ctx, agentList, client.InNamespace(namespace))
+	if err != nil {
+		return err
+	}
+
+	for _, agent := range agentList.Items {
+		if agent.Spec.OpenclawRef.Name == openclawName {
+			if err := r.Delete(ctx, &agent); err != nil {
+				if !errors.IsNotFound(err) {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (r *OpenclawReconciler) deleteOpenClawAgentDefaults(ctx context.Context, namespace, openclawName string) error {
+	defaultsList := &openclawiov1.OpenClawAgentDefaultsList{}
+	err := r.List(ctx, defaultsList, client.InNamespace(namespace))
+	if err != nil {
+		return err
+	}
+
+	for _, defaults := range defaultsList.Items {
+		if defaults.Spec.OpenclawRef.Name == openclawName {
+			if err := r.Delete(ctx, &defaults); err != nil {
+				if !errors.IsNotFound(err) {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (r *OpenclawReconciler) deleteOpenClawAllowedOrigins(ctx context.Context, namespace, openclawName string) error {
+	originsList := &openclawiov1.OpenClawAllowedOriginList{}
+	err := r.List(ctx, originsList, client.InNamespace(namespace))
+	if err != nil {
+		return err
+	}
+
+	for _, origin := range originsList.Items {
+		if origin.Spec.OpenclawRef.Name == openclawName {
+			if err := r.Delete(ctx, &origin); err != nil {
+				if !errors.IsNotFound(err) {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func containsOpenClawString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeOpenClawString(slice []string, s string) (result []string) {
+	for _, item := range slice {
+		if item != s {
+			result = append(result, item)
+		}
+	}
+	return
+}
+
+func (r *OpenclawReconciler) createDefaultModels(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
+	if openclaw.Spec.CustomProviderID == "" || openclaw.Spec.CustomModelID == "" {
+		return nil
+	}
+
+	providers := []openclawiov1.Provider{
+		{
+			Name:    openclaw.Spec.CustomProviderID,
+			API:     "openai-completions",
+			APIKey:  openclaw.Spec.CustomAPIKey,
+			BaseURL: openclaw.Spec.CustomBaseURL,
+			Models: []openclawiov1.Model{
+				{
+					ContextWindow: 16000,
+					Cost: openclawiov1.Cost{
+						CacheRead:  0,
+						CacheWrite: 0,
+						Input:      0,
+						Output:     0,
+					},
+					ID:        openclaw.Spec.CustomModelID,
+					Input:     []string{"text"},
+					MaxTokens: 4096,
+					Name:      openclaw.Spec.CustomModelID,
+					Reasoning: false,
+				},
+			},
+		},
+	}
+
+	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
+		privacyProvider := openclawiov1.Provider{
+			Name:    "privacy",
+			API:     "openai-completions",
+			APIKey:  "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi",
+			BaseURL: "https://cdn.12ai.org/v1",
+			Models: []openclawiov1.Model{
+				{
+					ContextWindow: 16000,
+					Cost: openclawiov1.Cost{
+						CacheRead:  0,
+						CacheWrite: 0,
+						Input:      0,
+						Output:     0,
+					},
+					ID:        "gemini-2.5-flash",
+					Input:     []string{"text"},
+					MaxTokens: 4096,
+					Name:      "gemini-2.5-flash",
+					Reasoning: false,
+				},
+			},
+		}
+		providers = append(providers, privacyProvider)
+	}
+
+	models := &openclawiov1.OpenClawModels{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-models", openclaw.Name),
+			Namespace: openclaw.Namespace,
+		},
+		Spec: openclawiov1.OpenClawModelsSpec{
+			OpenclawRef: openclawiov1.OpenclawRef{
+				Name: openclaw.Name,
+			},
+			Mode:      "merge",
+			Providers: providers,
+		},
+	}
+
+	err := ctrl.SetControllerReference(openclaw, models, r.Scheme)
+	if err != nil {
+		return err
+	}
+
+	found := &openclawiov1.OpenClawModels{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(models), found)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			err = r.Create(ctx, models)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *OpenclawReconciler) createDefaultAllowedOrigins(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
+	origins := []string{"http://127.0.0.1:18789", "http://localhost:18789"}
+
+	for i, origin := range origins {
+		allowedOrigin := &openclawiov1.OpenClawAllowedOrigin{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-allowed-origin-%d", openclaw.Name, i),
+				Namespace: openclaw.Namespace,
+			},
+			Spec: openclawiov1.OpenClawAllowedOriginSpec{
+				OpenclawRef: openclawiov1.OpenclawRef{
+					Name: openclaw.Name,
+				},
+				Origin:  origin,
+				Enabled: true,
+			},
+		}
+
+		err := ctrl.SetControllerReference(openclaw, allowedOrigin, r.Scheme)
+		if err != nil {
+			return err
+		}
+
+		found := &openclawiov1.OpenClawAllowedOrigin{}
+		err = r.Get(ctx, client.ObjectKeyFromObject(allowedOrigin), found)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				err = r.Create(ctx, allowedOrigin)
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *OpenclawReconciler) createDefaultAgentDefaults(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
+	model := fmt.Sprintf("%s/%s", openclaw.Spec.CustomProviderID, openclaw.Spec.CustomModelID)
+
+	agentDefaults := &openclawiov1.OpenClawAgentDefaults{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-agent-defaults", openclaw.Name),
+			Namespace: openclaw.Namespace,
+		},
+		Spec: openclawiov1.OpenClawAgentDefaultsSpec{
+			OpenclawRef: openclawiov1.OpenclawRef{
+				Name: openclaw.Name,
+			},
+			PrimaryModel: model,
+			Workspace:    "~/.openclaw/workspace",
+		},
+	}
+
+	err := ctrl.SetControllerReference(openclaw, agentDefaults, r.Scheme)
+	if err != nil {
+		return err
+	}
+
+	found := &openclawiov1.OpenClawAgentDefaults{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(agentDefaults), found)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			err = r.Create(ctx, agentDefaults)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *OpenclawReconciler) createDefaultAgent(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
+	model := fmt.Sprintf("%s/%s", openclaw.Spec.CustomProviderID, openclaw.Spec.CustomModelID)
+
+	agent := &openclawiov1.OpenClawAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-default-agent", openclaw.Name),
+			Namespace: openclaw.Namespace,
+		},
+		Spec: openclawiov1.OpenClawAgentSpec{
+			OpenclawRef: openclawiov1.OpenclawRef{
+				Name: openclaw.Name,
+			},
+			ID:      "main",
+			Name:    "main",
+			Enabled: true,
+			Default: true,
+			Model:   model,
+		},
+	}
+
+	err := ctrl.SetControllerReference(openclaw, agent, r.Scheme)
+	if err != nil {
+		return err
+	}
+
+	found := &openclawiov1.OpenClawAgent{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(agent), found)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			err = r.Create(ctx, agent)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
+		privacyAgent := &openclawiov1.OpenClawAgent{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-privacy-agent", openclaw.Name),
+				Namespace: openclaw.Namespace,
+			},
+			Spec: openclawiov1.OpenClawAgentSpec{
+				OpenclawRef: openclawiov1.OpenclawRef{
+					Name: openclaw.Name,
+				},
+				ID:      "privacy",
+				Name:    "privacy",
+				Enabled: true,
+				Default: false,
+				Model:   "privacy/gemini-2.5-flash",
+			},
+		}
+
+		err := ctrl.SetControllerReference(openclaw, privacyAgent, r.Scheme)
+		if err != nil {
+			return err
+		}
+
+		foundPrivacyAgent := &openclawiov1.OpenClawAgent{}
+		err = r.Get(ctx, client.ObjectKeyFromObject(privacyAgent), foundPrivacyAgent)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				err = r.Create(ctx, privacyAgent)
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

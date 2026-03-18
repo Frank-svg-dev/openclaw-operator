@@ -1,16 +1,17 @@
 apiVersion: openclaw.io/v1
 kind: Openclaw
 metadata:
-  name: openclaw-sample
-  namespace: test
+  name: openclaw-agent-test
+  namespace: kkk
 spec:
   image: 10.29.231.164/ghcr.m.daocloud.io/openclaw/openclaw:latest
   replicas: 1
-  serviceType: ClusterIP
+  serviceType: NodePort
   gatewayPort: 18789
   gatewayBind: lan
-  customApiKey: "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi"
-  customBaseUrl: "https://cdn.12ai.org/v1"
+  privacy: true
+  customApiKey: "sk-3Zxkdrsdf"
+  customBaseUrl: "https://cdn.sdf.org/v1"
   customModelId: "qwen3.5-plus"
   customProviderId: "ppnb"
   customCompatibility: openai

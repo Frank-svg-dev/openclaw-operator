@@ -2,7 +2,7 @@ apiVersion: openclaw.io/v1
 kind: OpenClawAllowedOrigin
 metadata:
   name: openclaw-ui-public-sss
-  namespace: test
+  namespace: kkk
 spec:
   openclawRef:
     name: openclaw-sample
@@ -13,7 +13,7 @@ apiVersion: openclaw.io/v1
 kind: OpenClawAllowedOrigin
 metadata:
   name: openclaw-ui-public
-  namespace: test
+  namespace: kkk
 spec:
   openclawRef:
     name: openclaw-sample
@@ -24,9 +24,10 @@ apiVersion: openclaw.io/v1
 kind: OpenClawAllowedOrigin
 metadata:
   name: openclaw-ui-external
-  namespace: test
+  namespace: kkk
 spec:
   openclawRef:
     name: openclaw-sample
-  origin: "https://test.sssopenclaw.example.com"
+  origin: "http://10.29.231.160:32296"
   enabled: true
+  useHTTP: true

@@ -1,0 +1,106 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: openclawmodels.openclaw.io
+spec:
+  group: openclaw.io
+  names:
+    kind: OpenClawModels
+    listKind: OpenClawModelsList
+    plural: openclawmodels
+    singular: openclawmodels
+    shortNames:
+    - ocm
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              openclawRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+              mode:
+                type: string
+              providers:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    api:
+                      type: string
+                    apiKey:
+                      type: string
+                    baseUrl:
+                      type: string
+                    models:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          contextWindow:
+                            type: integer
+                          cost:
+                            type: object
+                            properties:
+                              cacheRead:
+                                type: integer
+                              cacheWrite:
+                                type: integer
+                              input:
+                                type: integer
+                              output:
+                                type: integer
+                          id:
+                            type: string
+                          input:
+                            type: array
+                            items:
+                              type: string
+                          maxTokens:
+                            type: integer
+                          name:
+                            type: string
+                          reasoning:
+                            type: boolean
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+              message:
+                type: string
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: OpenClawRef
+      type: string
+      jsonPath: .spec.openclawRef.name
+    - name: Mode
+      type: string
+      jsonPath: .spec.mode
+    - name: Providers
+      type: string
+      jsonPath: .spec.providers
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp

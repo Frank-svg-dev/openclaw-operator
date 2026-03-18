@@ -20,7 +20,9 @@ import (
 type AllowedOriginConfig struct {
 	Gateway struct {
 		ControlUI struct {
-			AllowedOrigins []string `json:"allowedOrigins"`
+			AllowedOrigins               []string `json:"allowedOrigins"`
+			AllowInsecureAuth            bool     `json:"allowInsecureAuth,omitempty"`
+			DangerouslyDisableDeviceAuth bool     `json:"dangerouslyDisableDeviceAuth,omitempty"`
 		} `json:"controlUi"`
 	} `json:"gateway"`
 }
@@ -65,10 +67,14 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 
 	var allowedOrigins []string
 	var currentOrigin *openclawiov1.OpenClawAllowedOrigin
+	var useHTTP bool
 	for _, o := range origins.Items {
 		if o.Spec.OpenclawRef.Name == openclawName && o.Spec.Enabled {
 			allowedOrigins = append(allowedOrigins, o.Spec.Origin)
 			currentOrigin = &o
+			if o.Spec.UseHTTP {
+				useHTTP = true
+			}
 		}
 	}
 
@@ -98,6 +104,10 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 
 	config := AllowedOriginConfig{}
 	config.Gateway.ControlUI.AllowedOrigins = allowedOrigins
+	if useHTTP {
+		config.Gateway.ControlUI.AllowInsecureAuth = true
+		config.Gateway.ControlUI.DangerouslyDisableDeviceAuth = true
+	}
 
 	configJSON, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -185,10 +195,20 @@ func (r *OpenClawAllowedOriginReconciler) reconcileAllConfigMaps(ctx context.Con
 		return ctrl.Result{}, err
 	}
 
-	openclawToOrigins := make(map[string][]string)
+	type OpenclawConfig struct {
+		AllowedOrigins []string
+		UseHTTP        bool
+	}
+
+	openclawToOrigins := make(map[string]OpenclawConfig)
 	for _, o := range origins.Items {
 		if o.Spec.OpenclawRef.Name != "" && o.Spec.Enabled {
-			openclawToOrigins[o.Spec.OpenclawRef.Name] = append(openclawToOrigins[o.Spec.OpenclawRef.Name], o.Spec.Origin)
+			config := openclawToOrigins[o.Spec.OpenclawRef.Name]
+			config.AllowedOrigins = append(config.AllowedOrigins, o.Spec.Origin)
+			if o.Spec.UseHTTP {
+				config.UseHTTP = true
+			}
+			openclawToOrigins[o.Spec.OpenclawRef.Name] = config
 		}
 	}
 
@@ -205,9 +225,9 @@ func (r *OpenClawAllowedOriginReconciler) reconcileAllConfigMaps(ctx context.Con
 		}
 
 		openclawName := strings.TrimSuffix(cm.Name, "-allowed-origins")
-		allowedOrigins, exists := openclawToOrigins[openclawName]
+		config, exists := openclawToOrigins[openclawName]
 
-		if !exists || len(allowedOrigins) == 0 {
+		if !exists || len(config.AllowedOrigins) == 0 {
 			logger.Info("No enabled allowed origins found for OpenClaw instance, deleting ConfigMap.", "ConfigMap", cm.Name)
 			err = r.Delete(ctx, &cm)
 			if err != nil && !errors.IsNotFound(err) {
@@ -218,10 +238,14 @@ func (r *OpenClawAllowedOriginReconciler) reconcileAllConfigMaps(ctx context.Con
 			continue
 		}
 
-		config := AllowedOriginConfig{}
-		config.Gateway.ControlUI.AllowedOrigins = allowedOrigins
+		allowedOriginConfig := AllowedOriginConfig{}
+		allowedOriginConfig.Gateway.ControlUI.AllowedOrigins = config.AllowedOrigins
+		if config.UseHTTP {
+			allowedOriginConfig.Gateway.ControlUI.AllowInsecureAuth = true
+			allowedOriginConfig.Gateway.ControlUI.DangerouslyDisableDeviceAuth = true
+		}
 
-		configJSON, err := json.MarshalIndent(config, "", "  ")
+		configJSON, err := json.MarshalIndent(allowedOriginConfig, "", "  ")
 		if err != nil {
 			logger.Error(err, "Failed to marshal config to JSON.")
 			continue

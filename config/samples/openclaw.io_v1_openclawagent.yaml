@@ -1,0 +1,11 @@
+apiVersion: openclaw.io/v1
+kind: OpenClawAgent
+metadata:
+  name: content-agent
+  namespace: kkk
+spec:
+  openclawRef:
+    name: openclaw-agent-test
+  id: "privacy-agent"
+  model: "privacy/gemini-2.5-flash"
+  enabled: true

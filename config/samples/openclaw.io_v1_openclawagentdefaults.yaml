@@ -1,0 +1,12 @@
+apiVersion: openclaw.io/v1
+kind: OpenClawAgentDefaults
+metadata:
+  name: openclaw-sample
+  namespace: test
+spec:
+  openclawRef:
+    name: openclaw-sample
+  primaryModel: "anthropic/claude-opus-4-6"
+  fallbacks:
+    - "qwen/qwen3.5-plus"
+  workspace: "/home/workspace/default"

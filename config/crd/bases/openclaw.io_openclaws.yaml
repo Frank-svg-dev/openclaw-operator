@@ -39,6 +39,8 @@ spec:
                 type: integer
               gatewayBind:
                 type: string
+              privacy:
+                type: boolean
               gatewayToken:
                 type: string
               customApiKey:
