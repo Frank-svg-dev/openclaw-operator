@@ -5,8 +5,8 @@ metadata:
   namespace: test
 type: Opaque
 stringData:
-  appId: "cli_a92510a7a3f99cb3"
-  appSecret: "eO8qrwH4JDW0eAdzaLQdcgaJO3qjJ6u5"
+  appId: "<YOUR_APP_ID>"
+  appSecret: "<YOUR_APP_SECRET>"
 ---
 apiVersion: openclaw.io/v1
 kind: OpenClawChannel

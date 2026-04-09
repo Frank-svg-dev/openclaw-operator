@@ -3,3 +3,8 @@ kind: Kustomization
 
 resources:
 - bases/openclaw.io_openclaws.yaml
+- bases/openclaw.io_openclawallowedorigins.yaml
+- bases/openclaw.io_openclawchannels.yaml
+- bases/openclaw.io_openclawagentdefaults.yaml
+- bases/openclaw.io_openclawagents.yaml
+- bases/openclaw.io_openclawmodels.yaml

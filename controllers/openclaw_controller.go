@@ -163,6 +163,59 @@ func (r *OpenclawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
+	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
+		conchProxySecret := r.secretForConchProxy(openclaw)
+		conchProxySecretFound := &corev1.Secret{}
+		err = r.Get(ctx, client.ObjectKeyFromObject(conchProxySecret), conchProxySecretFound)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("Creating a new conch-proxy Secret.", "Secret.Namespace", conchProxySecret.Namespace, "Secret.Name", conchProxySecret.Name)
+				err = r.Create(ctx, conchProxySecret)
+				if err != nil {
+					logger.Error(err, "Failed to create new conch-proxy Secret.", "Secret.Namespace", conchProxySecret.Namespace, "Secret.Name", conchProxySecret.Name)
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to get conch-proxy Secret.")
+			return ctrl.Result{}, err
+		}
+
+		conchProxyDeployment := r.deploymentForConchProxy(openclaw)
+		conchProxyDeploymentFound := &appsv1.Deployment{}
+		err = r.Get(ctx, client.ObjectKeyFromObject(conchProxyDeployment), conchProxyDeploymentFound)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("Creating a new conch-proxy Deployment.", "Deployment.Namespace", conchProxyDeployment.Namespace, "Deployment.Name", conchProxyDeployment.Name)
+				err = r.Create(ctx, conchProxyDeployment)
+				if err != nil {
+					logger.Error(err, "Failed to create new conch-proxy Deployment.", "Deployment.Namespace", conchProxyDeployment.Namespace, "Deployment.Name", conchProxyDeployment.Name)
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to get conch-proxy Deployment.")
+			return ctrl.Result{}, err
+		}
+
+		conchProxyService := r.serviceForConchProxy(openclaw)
+		conchProxyServiceFound := &corev1.Service{}
+		err = r.Get(ctx, client.ObjectKeyFromObject(conchProxyService), conchProxyServiceFound)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				logger.Info("Creating a new conch-proxy Service.", "Service.Namespace", conchProxyService.Namespace, "Service.Name", conchProxyService.Name)
+				err = r.Create(ctx, conchProxyService)
+				if err != nil {
+					logger.Error(err, "Failed to create new conch-proxy Service.", "Service.Namespace", conchProxyService.Namespace, "Service.Name", conchProxyService.Name)
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to get conch-proxy Service.")
+			return ctrl.Result{}, err
+		}
+	}
+
 	err = r.createDefaultResources(ctx, openclaw)
 	if err != nil {
 		logger.Error(err, "Failed to create default resources.")
@@ -221,6 +274,27 @@ func (r *OpenclawReconciler) secretForOpenclaw(m *openclawiov1.Openclaw) *corev1
 	return secret
 }
 
+func (r *OpenclawReconciler) secretForConchProxy(m *openclawiov1.Openclaw) *corev1.Secret {
+	b := make([]byte, 32)
+	rand.Read(b)
+	sensitiveToken := hex.EncodeToString(b)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name + "-conch-proxy-secrets",
+			Namespace: m.Namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"upstream-api-key": m.Spec.CustomAPIKey,
+			"slm-api-key":      m.Spec.SLMAPIKey,
+			"sensitive-token":  sensitiveToken,
+		},
+	}
+	ctrl.SetControllerReference(m, secret, r.Scheme)
+	return secret
+}
+
 func (r *OpenclawReconciler) pvcForOpenclaw(m *openclawiov1.Openclaw) *corev1.PersistentVolumeClaim {
 	accessModes := []corev1.PersistentVolumeAccessMode{}
 	for _, mode := range m.Spec.Storage.AccessModes {
@@ -246,6 +320,11 @@ func (r *OpenclawReconciler) pvcForOpenclaw(m *openclawiov1.Openclaw) *corev1.Pe
 }
 
 func (r *OpenclawReconciler) jobForOpenclaw(m *openclawiov1.Openclaw) *batchv1.Job {
+	isPrivacy := "false"
+	if m.Spec.Privacy != nil && *m.Spec.Privacy {
+		isPrivacy = "true"
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-onboard",
@@ -267,18 +346,10 @@ func (r *OpenclawReconciler) jobForOpenclaw(m *openclawiov1.Openclaw) *batchv1.J
 							Name:            "onboard",
 							Image:           m.Spec.Image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							SecurityContext: &corev1.SecurityContext{
-								RunAsNonRoot:             func(b bool) *bool { return &b }(true),
-								RunAsUser:                func(i int64) *int64 { return &i }(1000),
-								AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-							},
 							Env: []corev1.EnvVar{
 								{
 									Name:  "HOME",
-									Value: "/home/node",
+									Value: "/root",
 								},
 								{
 									Name: "OPENCLAW_GATEWAY_TOKEN",
@@ -302,37 +373,48 @@ func (r *OpenclawReconciler) jobForOpenclaw(m *openclawiov1.Openclaw) *batchv1.J
 							Command: []string{"/bin/sh", "-lc"},
 							Args: []string{
 								`set -eu
-mkdir -p /home/node/.openclaw
-mkdir -p /home/node/.openclaw/workspace
-mkdir -p /home/node/.openclaw/skills
+mkdir -p /root/.openclaw
+mkdir -p /root/.openclaw/workspace
+mkdir -p /root/.openclaw/skills
 
-if [ -f /home/node/.openclaw/openclaw.json ]; then
+if [ -f /root/.openclaw/openclaw.json ]; then
   echo "openclaw.json already exists, skip onboarding"
   exit 0
+fi
+
+CUSTOM_BASE_URL="` + m.Spec.CustomBaseURL + `"
+if [ "` + isPrivacy + `" = "true" ]; then
+  CUSTOM_BASE_URL="http://` + m.Name + `-conch-proxy.` + m.Namespace + `:80"
+  echo "Using conch-proxy as base URL: $CUSTOM_BASE_URL"
 fi
 
 openclaw onboard --non-interactive \
   --mode local \
   --auth-choice custom-api-key \
-  --custom-base-url "` + m.Spec.CustomBaseURL + `" \
+  --custom-base-url "$CUSTOM_BASE_URL" \
   --custom-model-id "` + m.Spec.CustomModelID + `" \
   --custom-provider-id "` + m.Spec.CustomProviderID + `" \
   --custom-compatibility ` + m.Spec.CustomCompatibility + ` \
   --secret-input-mode ref \
   --gateway-auth token \
   --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
-  --gateway-port ` + string(rune(m.Spec.GatewayPort)) + ` \
+  --gateway-port ` + fmt.Sprintf("%d", m.Spec.GatewayPort) + ` \
   --gateway-bind ` + m.Spec.GatewayBind + ` \
   --accept-risk
 
-echo "===== generated config ====="
-ls -la /home/node/.openclaw
-test -f /home/node/.openclaw/openclaw.json`,
+if [ "` + isPrivacy + `" = "true" ]; then
+	echo "Installing hermitcrab plugin..."
+    openclaw plugins install /plugin/hermitcrab/
+    echo "Installed hermitcrab plugin"
+fi
+
+echo "Openclaw Instance Initialized Successfully"
+`,
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "data",
-									MountPath: "/home/node/.openclaw",
+									MountPath: "/root/.openclaw",
 								},
 							},
 						},
@@ -386,19 +468,11 @@ func (r *OpenclawReconciler) statefulSetForOpenclaw(m *openclawiov1.Openclaw) *a
 							Name:            "wait-for-onboard",
 							Image:           m.Spec.Image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							SecurityContext: &corev1.SecurityContext{
-								RunAsNonRoot:             func(b bool) *bool { return &b }(true),
-								RunAsUser:                func(i int64) *int64 { return &i }(1000),
-								AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-							},
-							Command: []string{"/bin/sh", "-lc"},
+							Command:         []string{"/bin/sh", "-lc"},
 							Args: []string{
 								`set -eu
 echo "Waiting for openclaw.json to be created by onboard job..."
-while [ ! -f /home/node/.openclaw/openclaw.json ]; do
+while [ ! -f /root/.openclaw/openclaw.json ]; do
   echo "openclaw.json not found, waiting..."
   sleep 5
 done
@@ -407,7 +481,7 @@ echo "openclaw.json found, onboard job completed!"`,
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "data",
-									MountPath: "/home/node/.openclaw",
+									MountPath: "/root/.openclaw",
 								},
 							},
 						},
@@ -417,14 +491,6 @@ echo "openclaw.json found, onboard job completed!"`,
 							Name:            "gateway",
 							Image:           m.Spec.Image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							SecurityContext: &corev1.SecurityContext{
-								RunAsNonRoot:             func(b bool) *bool { return &b }(true),
-								RunAsUser:                func(i int64) *int64 { return &i }(1000),
-								AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-							},
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",
@@ -434,7 +500,7 @@ echo "openclaw.json found, onboard job completed!"`,
 							Env: []corev1.EnvVar{
 								{
 									Name:  "HOME",
-									Value: "/home/node",
+									Value: "/root",
 								},
 								{
 									Name: "OPENCLAW_GATEWAY_TOKEN",
@@ -458,7 +524,7 @@ echo "openclaw.json found, onboard job completed!"`,
 							Command: []string{"/bin/sh", "-lc"},
 							Args: []string{
 								`set -eu
-test -f /home/node/.openclaw/openclaw.json
+test -f /root/.openclaw/openclaw.json
 exec openclaw gateway`,
 							},
 							ReadinessProbe: &corev1.Probe{
@@ -498,26 +564,18 @@ exec openclaw gateway`,
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "data",
-									MountPath: "/home/node/.openclaw",
+									MountPath: "/root/.openclaw",
 								},
 							},
 						},
 						{
 							Name:            "config-reloader",
-							Image:           "10.29.231.164/ghcr.m.daocloud.io/openclaw/config-reloader:v0.6",
+							Image:           "10.29.15.63/ghcr.m.daocloud.io/openclaw/config-reloader:v0.6",
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							SecurityContext: &corev1.SecurityContext{
-								RunAsNonRoot:             func(b bool) *bool { return &b }(true),
-								RunAsUser:                func(i int64) *int64 { return &i }(1000),
-								AllowPrivilegeEscalation: func(b bool) *bool { return &b }(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "data",
-									MountPath: "/home/node/.openclaw",
+									MountPath: "/root/.openclaw",
 								},
 								{
 									Name:      "allowed-origins",
@@ -598,6 +656,166 @@ exec openclaw gateway`,
 	}
 	ctrl.SetControllerReference(m, sts, r.Scheme)
 	return sts
+}
+
+func (r *OpenclawReconciler) deploymentForConchProxy(m *openclawiov1.Openclaw) *appsv1.Deployment {
+	replicas := int32(2)
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name + "-conch-proxy",
+			Namespace: m.Namespace,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": m.Name + "-conch-proxy"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": m.Name + "-conch-proxy"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:            "conch-proxy",
+							Image:           "10.29.15.63/ghcr.m.daocloud.io/openclaw/conch-proxy:v0.0.1",
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 8080,
+									Name:          "http",
+								},
+							},
+							Env: []corev1.EnvVar{
+								{
+									Name:  "PORT",
+									Value: "8080",
+								},
+								{
+									Name:  "UPSTREAM_API_URL",
+									Value: m.Spec.CustomBaseURL,
+								},
+								{
+									Name: "UPSTREAM_API_KEY",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: m.Name + "-conch-proxy-secrets"},
+											Key:                  "upstream-api-key",
+										},
+									},
+								},
+								{
+									Name:  "SLM_API_URL",
+									Value: m.Spec.SLMAPIURL,
+								},
+								{
+									Name:  "SLM_MODEL",
+									Value: m.Spec.SLMModelID,
+								},
+								{
+									Name: "SLM_API_KEY",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: m.Name + "-conch-proxy-secrets"},
+											Key:                  "slm-api-key",
+										},
+									},
+								},
+								{
+									Name:  "PROXY_URL",
+									Value: "",
+								},
+								{
+									Name:  "ENABLE_INTERCEPTOR",
+									Value: "true",
+								},
+								{
+									Name: "SENSITIVE_TOKEN",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: m.Name + "-conch-proxy-secrets"},
+											Key:                  "sensitive-token",
+										},
+									},
+								},
+								{
+									Name:  "UNLOCK_TTL_MINUTES",
+									Value: "60",
+								},
+								{
+									Name:  "ENABLE_TLS",
+									Value: "false",
+								},
+								{
+									Name:  "TLS_CERT_FILE",
+									Value: "/app/server.crt",
+								},
+								{
+									Name:  "TLS_KEY_FILE",
+									Value: "/app/server.key",
+								},
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       10,
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 15,
+								PeriodSeconds:       20,
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	ctrl.SetControllerReference(m, deployment, r.Scheme)
+	return deployment
+}
+
+func (r *OpenclawReconciler) serviceForConchProxy(m *openclawiov1.Openclaw) *corev1.Service {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name + "-conch-proxy",
+			Namespace: m.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: map[string]string{"app": m.Name + "-conch-proxy"},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "http",
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+				},
+			},
+		},
+	}
+	ctrl.SetControllerReference(m, service, r.Scheme)
+	return service
 }
 
 func (r *OpenclawReconciler) serviceForOpenclaw(m *openclawiov1.Openclaw) *corev1.Service {
@@ -691,7 +909,57 @@ func (r *OpenclawReconciler) deleteAllRelatedResources(ctx context.Context, open
 		return err
 	}
 
+	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
+		if err := r.deleteConchProxyResources(ctx, namespace, openclawName); err != nil {
+			logger.Error(err, "Failed to delete conch-proxy resources")
+			return err
+		}
+	}
+
 	logger.Info("All related resources deleted successfully", "name", openclawName)
+	return nil
+}
+
+func (r *OpenclawReconciler) deleteConchProxyResources(ctx context.Context, namespace, openclawName string) error {
+	// Delete conch-proxy Service
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      openclawName + "-conch-proxy",
+			Namespace: namespace,
+		},
+	}
+	if err := r.Delete(ctx, service); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete conch-proxy Deployment
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      openclawName + "-conch-proxy",
+			Namespace: namespace,
+		},
+	}
+	if err := r.Delete(ctx, deployment); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// Delete conch-proxy Secret
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      openclawName + "-conch-proxy-secrets",
+			Namespace: namespace,
+		},
+	}
+	if err := r.Delete(ctx, secret); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -794,12 +1062,20 @@ func (r *OpenclawReconciler) createDefaultModels(ctx context.Context, openclaw *
 		return nil
 	}
 
+	apikey := openclaw.Spec.CustomAPIKey
+	baseURL := openclaw.Spec.CustomBaseURL
+
+	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
+		apikey = fmt.Sprintf("sk-%s-conch-proxy-apikey", openclaw.Name)
+		baseURL = fmt.Sprintf("%s-conch-proxy.%s.svc.cluster.local:80", openclaw.Name, openclaw.Namespace)
+	}
+
 	providers := []openclawiov1.Provider{
 		{
 			Name:    openclaw.Spec.CustomProviderID,
 			API:     "openai-completions",
-			APIKey:  openclaw.Spec.CustomAPIKey,
-			BaseURL: openclaw.Spec.CustomBaseURL,
+			APIKey:  apikey,
+			BaseURL: baseURL,
 			Models: []openclawiov1.Model{
 				{
 					ContextWindow: 16000,
@@ -817,32 +1093,6 @@ func (r *OpenclawReconciler) createDefaultModels(ctx context.Context, openclaw *
 				},
 			},
 		},
-	}
-
-	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
-		privacyProvider := openclawiov1.Provider{
-			Name:    "privacy",
-			API:     "openai-completions",
-			APIKey:  "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi",
-			BaseURL: "https://cdn.12ai.org/v1",
-			Models: []openclawiov1.Model{
-				{
-					ContextWindow: 16000,
-					Cost: openclawiov1.Cost{
-						CacheRead:  0,
-						CacheWrite: 0,
-						Input:      0,
-						Output:     0,
-					},
-					ID:        "gemini-2.5-flash",
-					Input:     []string{"text"},
-					MaxTokens: 4096,
-					Name:      "gemini-2.5-flash",
-					Reasoning: false,
-				},
-			},
-		}
-		providers = append(providers, privacyProvider)
 	}
 
 	models := &openclawiov1.OpenClawModels{
@@ -883,6 +1133,51 @@ func (r *OpenclawReconciler) createDefaultModels(ctx context.Context, openclaw *
 func (r *OpenclawReconciler) createDefaultAllowedOrigins(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
 	origins := []string{"http://127.0.0.1:18789", "http://localhost:18789"}
 
+	// 如果 serviceType 为 NodePort，添加 master 节点 IP + NodePort
+	if openclaw.Spec.ServiceType == "NodePort" {
+		// 获取服务信息
+		svc := &corev1.Service{}
+		svcKey := client.ObjectKey{Name: openclaw.Name, Namespace: openclaw.Namespace}
+		err := r.Get(ctx, svcKey, svc)
+		if err == nil && svc.Spec.Type == corev1.ServiceTypeNodePort {
+			// 获取 NodePort
+			var nodePort int32
+			for _, port := range svc.Spec.Ports {
+				if port.Name == "http" {
+					nodePort = port.NodePort
+					break
+				}
+			}
+
+			if nodePort > 0 {
+				// 获取 master 节点
+				nodes := &corev1.NodeList{}
+				err := r.List(ctx, nodes)
+				if err == nil {
+					for _, node := range nodes.Items {
+						// 检查是否为 master 节点
+						if isMasterNode(node) {
+							// 获取节点 IP
+							var nodeIP string
+							for _, addr := range node.Status.Addresses {
+								if addr.Type == corev1.NodeInternalIP {
+									nodeIP = addr.Address
+									break
+								}
+							}
+							if nodeIP != "" {
+								// 添加 NodePort origin
+								nodePortOrigin := fmt.Sprintf("http://%s:%d", nodeIP, nodePort)
+								origins = append(origins, nodePortOrigin)
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	for i, origin := range origins {
 		allowedOrigin := &openclawiov1.OpenClawAllowedOrigin{
 			ObjectMeta: metav1.ObjectMeta{
@@ -918,6 +1213,18 @@ func (r *OpenclawReconciler) createDefaultAllowedOrigins(ctx context.Context, op
 	}
 
 	return nil
+}
+
+func isMasterNode(node corev1.Node) bool {
+	// 检查节点是否有 master 标签
+	if _, ok := node.Labels["node-role.kubernetes.io/master"]; ok {
+		return true
+	}
+	// 检查节点是否有 control-plane 标签
+	if _, ok := node.Labels["node-role.kubernetes.io/control-plane"]; ok {
+		return true
+	}
+	return false
 }
 
 func (r *OpenclawReconciler) createDefaultAgentDefaults(ctx context.Context, openclaw *openclawiov1.Openclaw) error {
@@ -995,43 +1302,5 @@ func (r *OpenclawReconciler) createDefaultAgent(ctx context.Context, openclaw *o
 			return err
 		}
 	}
-
-	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
-		privacyAgent := &openclawiov1.OpenClawAgent{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("%s-privacy-agent", openclaw.Name),
-				Namespace: openclaw.Namespace,
-			},
-			Spec: openclawiov1.OpenClawAgentSpec{
-				OpenclawRef: openclawiov1.OpenclawRef{
-					Name: openclaw.Name,
-				},
-				ID:      "privacy",
-				Name:    "privacy",
-				Enabled: true,
-				Default: false,
-				Model:   "privacy/gemini-2.5-flash",
-			},
-		}
-
-		err := ctrl.SetControllerReference(openclaw, privacyAgent, r.Scheme)
-		if err != nil {
-			return err
-		}
-
-		foundPrivacyAgent := &openclawiov1.OpenClawAgent{}
-		err = r.Get(ctx, client.ObjectKeyFromObject(privacyAgent), foundPrivacyAgent)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				err = r.Create(ctx, privacyAgent)
-				if err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		}
-	}
-
 	return nil
 }

@@ -21,6 +21,9 @@ type OpenclawSpec struct {
 	GatewayPort         int32                `json:"gatewayPort,omitempty"`
 	GatewayBind         string               `json:"gatewayBind,omitempty"`
 	Privacy             *bool                `json:"privacy,omitempty"`
+	SLMAPIURL           string               `json:"slmApiUrl,omitempty"`
+	SLMModelID          string               `json:"slmModelId,omitempty"`
+	SLMAPIKey           string               `json:"slmApiKey,omitempty"`
 }
 
 type StorageSpec struct {

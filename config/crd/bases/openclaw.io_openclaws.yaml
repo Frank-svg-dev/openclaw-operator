@@ -1,6 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
   name: openclaws.openclaw.io
 spec:
   group: openclaw.io
@@ -8,103 +11,124 @@ spec:
     kind: Openclaw
     listKind: OpenclawList
     plural: openclaws
-    singular: openclaw
     shortNames:
     - oc
+    singular: openclaw
   scope: Namespaced
   versions:
-  - name: v1
-    served: true
-    storage: true
+  - additionalPrinterColumns:
+    - jsonPath: .spec.image
+      name: Image
+      type: string
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
-        type: object
         properties:
           apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
           spec:
-            type: object
             properties:
-              image:
-                type: string
-              replicas:
-                type: integer
-              serviceType:
-                type: string
-              gatewayPort:
-                type: integer
-              gatewayBind:
-                type: string
-              privacy:
-                type: boolean
-              gatewayToken:
-                type: string
               customApiKey:
                 type: string
               customBaseUrl:
+                type: string
+              customCompatibility:
                 type: string
               customModelId:
                 type: string
               customProviderId:
                 type: string
-              customCompatibility:
+              gatewayBind:
+                type: string
+              gatewayPort:
+                format: int32
+                type: integer
+              gatewayToken:
+                type: string
+              image:
+                type: string
+              privacy:
+                type: boolean
+              replicas:
+                format: int32
+                type: integer
+              resources:
+                properties:
+                  limits:
+                    properties:
+                      cpu:
+                        type: string
+                      memory:
+                        type: string
+                    type: object
+                  requests:
+                    properties:
+                      cpu:
+                        type: string
+                      memory:
+                        type: string
+                    type: object
+                type: object
+              serviceType:
+                type: string
+              slmApiKey:
+                type: string
+              slmApiUrl:
+                type: string
+              slmModelId:
                 type: string
               storage:
-                type: object
                 properties:
                   accessModes:
-                    type: array
                     items:
                       type: string
+                    type: array
                   storage:
                     type: string
-              resources:
                 type: object
-                properties:
-                  requests:
-                    type: object
-                    properties:
-                      cpu:
-                        type: string
-                      memory:
-                        type: string
-                  limits:
-                    type: object
-                    properties:
-                      cpu:
-                        type: string
-                      memory:
-                        type: string
-          status:
             type: object
+          status:
             properties:
-              replicas:
-                type: integer
-              readyReplicas:
-                type: integer
-              phase:
-                type: string
               message:
                 type: string
+              phase:
+                type: string
+              readyReplicas:
+                format: int32
+                type: integer
+              replicas:
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
     subresources:
       status: {}
-    additionalPrinterColumns:
-    - name: Image
-      type: string
-      jsonPath: .spec.image
-    - name: Replicas
-      type: integer
-      jsonPath: .spec.replicas
-    - name: Ready
-      type: integer
-      jsonPath: .status.readyReplicas
-    - name: Phase
-      type: string
-      jsonPath: .status.phase
-    - name: Age
-      type: date
-      jsonPath: .metadata.creationTimestamp

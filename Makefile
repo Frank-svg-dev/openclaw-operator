@@ -56,7 +56,11 @@ undeploy: ## Undeploy controller from the K8s cluster mentioned in ~/.kube/confi
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 .PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
-	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0)
+	@if [ ! -f $(CONTROLLER_GEN) ]; then \
+		$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5); \
+	else \
+		echo "controller-gen already exists, skipping installation"; \
+	fi
 
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 .PHONY: kustomize
@@ -69,9 +73,10 @@ envtest: ## Download envtest-setup locally if necessary.
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest@latest)
 
 define go-install-tool
-@set -e
-echo "Installing $(1) binaries..."
-GOBIN=$(shell pwd)/bin go install $(2)
+set -e; \
+package="$(2)"; \
+echo "Installing $(1) binaries..."; \
+GOBIN=$(shell pwd)/bin GOPROXY=$(GOPROXY) go install "$${package}"
 endef
 
 .PHONY: manifests
