@@ -1,10 +1,10 @@
 apiVersion: openclaw.io/v1
 kind: Openclaw
 metadata:
-  name: openclaw-okkk
-  namespace: kkk
+  name: openclaw-okkk-test
+  namespace: clawtest
 spec:
-  image: 10.29.15.63/ghcr.m.daocloud.io/openclaw/openclaw:20260408
+  image: 10.29.15.63/ghcr.m.daocloud.io/openclaw/openclaw:20260410
   replicas: 1
   serviceType: NodePort
   gatewayPort: 18789
@@ -15,9 +15,13 @@ spec:
   customModelId: "qwen3.5-plus"
   slmApiKey: "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi"
   slmApiUrl: "https://cdn.12ai.org/v1"
-  slmModelId: "gpt4-mini"
+  slmModelId: "deepseek-v3.2"
   customProviderId: "ppnb"
   customCompatibility: openai
+  redis:
+    address: "10.29.15.65:32667"
+    password: "ZD32N0Yce9l6"
+    db: 10
   storage:
     accessModes:
       - ReadWriteOnce

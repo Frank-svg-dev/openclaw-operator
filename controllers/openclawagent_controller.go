@@ -53,6 +53,12 @@ func (r *OpenClawAgentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
+	err = r.Get(ctx, req.NamespacedName, agent)
+	if err != nil {
+		logger.Error(err, "Failed to re-fetch OpenClawAgent after ensureSingleDefaultAgent.")
+		return ctrl.Result{}, err
+	}
+
 	return r.reconcileConfigMapForOpenclaw(ctx, req.Namespace, openclawName, agent)
 }
 
@@ -211,7 +217,7 @@ func (r *OpenClawAgentReconciler) reconcileConfigMapForOpenclaw(ctx context.Cont
 		currentAgent.Status.Phase = openclawiov1.OpenClawAgentPhaseReady
 		currentAgent.Status.Message = fmt.Sprintf("Successfully updated ConfigMap %s", configMapName)
 		err = r.Status().Update(ctx, currentAgent)
-		if err != nil {
+		if err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to update OpenClawAgent status.")
 			return ctrl.Result{}, err
 		}

@@ -24,6 +24,13 @@ type OpenclawSpec struct {
 	SLMAPIURL           string               `json:"slmApiUrl,omitempty"`
 	SLMModelID          string               `json:"slmModelId,omitempty"`
 	SLMAPIKey           string               `json:"slmApiKey,omitempty"`
+	Redis               RedisSpec            `json:"redis,omitempty"`
+}
+
+type RedisSpec struct {
+	Address  string `json:"address,omitempty"`
+	Password string `json:"password,omitempty"`
+	DB       int    `json:"db,omitempty"`
 }
 
 type StorageSpec struct {

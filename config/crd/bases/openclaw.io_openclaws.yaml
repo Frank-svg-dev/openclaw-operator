@@ -76,6 +76,15 @@ spec:
                 type: string
               privacy:
                 type: boolean
+              redis:
+                properties:
+                  address:
+                    type: string
+                  db:
+                    type: integer
+                  password:
+                    type: string
+                type: object
               replicas:
                 format: int32
                 type: integer

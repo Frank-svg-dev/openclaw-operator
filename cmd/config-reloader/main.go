@@ -37,7 +37,7 @@ func getMapKeys(m map[string]interface{}) []string {
 }
 
 func main() {
-	configPath := "/home/node/.openclaw"
+	configPath := "/root/.openclaw"
 	openclawJsonPath := filepath.Join(configPath, "openclaw.json")
 	allowedOriginsJsonPath := "/etc/openclaw-config/allowed-origins/allowed-origins.json"
 	channelsJsonPath := "/etc/openclaw-config/channels/channels.json"
@@ -272,7 +272,7 @@ func reloadConfig(openclawJsonPath, allowedOriginsJsonPath, channelsJsonPath, ag
 }
 
 func createAgentDirectories(agents map[string]interface{}) {
-	configPath := "/home/node/.openclaw"
+	configPath := "/root/.openclaw"
 	agentsPath := filepath.Join(configPath, "agents")
 	openclawJsonPath := filepath.Join(configPath, "openclaw.json")
 

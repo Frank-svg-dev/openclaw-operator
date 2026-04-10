@@ -18,10 +18,8 @@ WORKDIR /app
 
 COPY --from=builder /app/config-reloader .
 
-RUN addgroup -g 1000 node && \
-    adduser -D -u 1000 -G node node && \
-    chown -R node:node /app
+RUN chown -R root:root /app
 
-USER node
+USER root
 
 CMD ["./config-reloader"]

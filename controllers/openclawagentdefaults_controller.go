@@ -195,7 +195,7 @@ func (r *OpenClawAgentDefaultsReconciler) reconcileConfigMapForOpenclaw(ctx cont
 		currentDefaults.Status.Phase = openclawiov1.OpenClawAgentDefaultsPhaseReady
 		currentDefaults.Status.Message = fmt.Sprintf("Successfully updated ConfigMap %s", configMapName)
 		err = r.Status().Update(ctx, currentDefaults)
-		if err != nil {
+		if err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to update OpenClawAgentDefaults status.")
 			return ctrl.Result{}, err
 		}

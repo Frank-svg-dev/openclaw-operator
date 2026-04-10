@@ -214,7 +214,7 @@ func (r *OpenClawChannelReconciler) reconcileConfigMapForOpenclaw(ctx context.Co
 		currentChannel.Status.Phase = string(openclawiov1.OpenClawChannelPhaseReady)
 		currentChannel.Status.Message = fmt.Sprintf("Successfully updated ConfigMap %s", configMapName)
 		err = r.Status().Update(ctx, currentChannel)
-		if err != nil {
+		if err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to update OpenClawChannel status.")
 			return ctrl.Result{}, err
 		}

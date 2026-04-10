@@ -32,6 +32,24 @@ type OpenClawAllowedOriginReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+func (r *OpenClawAllowedOriginReconciler) reFetchAndUpdateStatus(ctx context.Context, obj *openclawiov1.OpenClawAllowedOrigin, phase openclawiov1.OpenClawAllowedOriginPhase, message string) error {
+	current := &openclawiov1.OpenClawAllowedOrigin{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(obj), current)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	current.Status.Phase = string(phase)
+	current.Status.Message = message
+	err = r.Status().Update(ctx, current)
+	if err != nil && errors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 func (r *OpenClawAllowedOriginReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -52,10 +70,10 @@ func (r *OpenClawAllowedOriginReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{}, nil
 	}
 
-	return r.reconcileConfigMapForOpenclaw(ctx, req.Namespace, openclawName)
+	return r.reconcileConfigMapForOpenclaw(ctx, req.Namespace, openclawName, origin)
 }
 
-func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx context.Context, namespace, openclawName string) (ctrl.Result, error) {
+func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx context.Context, namespace, openclawName string, currentOrigin *openclawiov1.OpenClawAllowedOrigin) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	origins := &openclawiov1.OpenClawAllowedOriginList{}
@@ -66,12 +84,10 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 	}
 
 	var allowedOrigins []string
-	var currentOrigin *openclawiov1.OpenClawAllowedOrigin
 	var useHTTP bool
 	for _, o := range origins.Items {
 		if o.Spec.OpenclawRef.Name == openclawName && o.Spec.Enabled {
 			allowedOrigins = append(allowedOrigins, o.Spec.Origin)
-			currentOrigin = &o
 			if o.Spec.UseHTTP {
 				useHTTP = true
 			}
@@ -92,9 +108,10 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 		if err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "Failed to delete ConfigMap.", "ConfigMap", configMapName)
 			if currentOrigin != nil {
-				currentOrigin.Status.Phase = string(openclawiov1.OpenClawAllowedOriginPhaseError)
-				currentOrigin.Status.Message = fmt.Sprintf("Failed to delete ConfigMap: %v", err)
-				_ = r.Status().Update(ctx, currentOrigin)
+				err := r.reFetchAndUpdateStatus(ctx, currentOrigin, openclawiov1.OpenClawAllowedOriginPhaseError, fmt.Sprintf("Failed to delete ConfigMap: %v", err))
+				if err != nil {
+					logger.Error(err, "Failed to update status.")
+				}
 			}
 			return ctrl.Result{}, err
 		}
@@ -113,9 +130,10 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 	if err != nil {
 		logger.Error(err, "Failed to marshal config to JSON.")
 		if currentOrigin != nil {
-			currentOrigin.Status.Phase = string(openclawiov1.OpenClawAllowedOriginPhaseError)
-			currentOrigin.Status.Message = fmt.Sprintf("Failed to marshal config: %v", err)
-			_ = r.Status().Update(ctx, currentOrigin)
+			err := r.reFetchAndUpdateStatus(ctx, currentOrigin, openclawiov1.OpenClawAllowedOriginPhaseError, fmt.Sprintf("Failed to marshal config: %v", err))
+			if err != nil {
+				logger.Error(err, "Failed to update status.")
+			}
 		}
 		return ctrl.Result{}, err
 	}
@@ -142,18 +160,14 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 			if err != nil {
 				logger.Error(err, "Failed to create new ConfigMap.", "ConfigMap.Namespace", configMap.Namespace, "ConfigMap.Name", configMap.Name)
 				if currentOrigin != nil {
-					currentOrigin.Status.Phase = string(openclawiov1.OpenClawAllowedOriginPhaseError)
-					currentOrigin.Status.Message = fmt.Sprintf("Failed to create ConfigMap: %v", err)
-					_ = r.Status().Update(ctx, currentOrigin)
+					_ = r.reFetchAndUpdateStatus(ctx, currentOrigin, openclawiov1.OpenClawAllowedOriginPhaseError, fmt.Sprintf("Failed to create ConfigMap: %v", err))
 				}
 				return ctrl.Result{}, err
 			}
 		} else {
 			logger.Error(err, "Failed to get ConfigMap.")
 			if currentOrigin != nil {
-				currentOrigin.Status.Phase = string(openclawiov1.OpenClawAllowedOriginPhaseError)
-				currentOrigin.Status.Message = fmt.Sprintf("Failed to get ConfigMap: %v", err)
-				_ = r.Status().Update(ctx, currentOrigin)
+				_ = r.reFetchAndUpdateStatus(ctx, currentOrigin, openclawiov1.OpenClawAllowedOriginPhaseError, fmt.Sprintf("Failed to get ConfigMap: %v", err))
 			}
 			return ctrl.Result{}, err
 		}
@@ -164,21 +178,16 @@ func (r *OpenClawAllowedOriginReconciler) reconcileConfigMapForOpenclaw(ctx cont
 		if err != nil {
 			logger.Error(err, "Failed to update ConfigMap.", "ConfigMap.Namespace", configMap.Namespace, "ConfigMap.Name", configMap.Name)
 			if currentOrigin != nil {
-				currentOrigin.Status.Phase = string(openclawiov1.OpenClawAllowedOriginPhaseError)
-				currentOrigin.Status.Message = fmt.Sprintf("Failed to update ConfigMap: %v", err)
-				_ = r.Status().Update(ctx, currentOrigin)
+				_ = r.reFetchAndUpdateStatus(ctx, currentOrigin, openclawiov1.OpenClawAllowedOriginPhaseError, fmt.Sprintf("Failed to update ConfigMap: %v", err))
 			}
 			return ctrl.Result{}, err
 		}
 	}
 
 	if currentOrigin != nil {
-		currentOrigin.Status.Phase = string(openclawiov1.OpenClawAllowedOriginPhaseReady)
-		currentOrigin.Status.Message = fmt.Sprintf("Successfully updated ConfigMap %s with %d allowed origins", configMapName, len(allowedOrigins))
-		err = r.Status().Update(ctx, currentOrigin)
+		err = r.reFetchAndUpdateStatus(ctx, currentOrigin, openclawiov1.OpenClawAllowedOriginPhaseReady, fmt.Sprintf("Successfully updated ConfigMap %s with %d allowed origins", configMapName, len(allowedOrigins)))
 		if err != nil {
 			logger.Error(err, "Failed to update OpenClawAllowedOrigin status.")
-			return ctrl.Result{}, err
 		}
 	}
 

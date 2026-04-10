@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -77,6 +79,91 @@ func (r *OpenclawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{Requeue: true}, nil
 		}
 		logger.Error(err, "Failed to get Secret.")
+		return ctrl.Result{}, err
+	}
+
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      openclaw.Name + "-gateway",
+			Namespace: openclaw.Namespace,
+		},
+	}
+	saFound := &corev1.ServiceAccount{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(sa), saFound)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating a new ServiceAccount.", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
+			err = r.Create(ctx, sa)
+			if err != nil {
+				logger.Error(err, "Failed to create new ServiceAccount.", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+		logger.Error(err, "Failed to get ServiceAccount.")
+		return ctrl.Result{}, err
+	}
+
+	roleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      openclaw.Name + "-gateway-job-reader",
+			Namespace: openclaw.Namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      openclaw.Name + "-gateway",
+				Namespace: openclaw.Namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     openclaw.Name + "-gateway-job-reader",
+		},
+	}
+	roleBindingFound := &rbacv1.RoleBinding{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(roleBinding), roleBindingFound)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			role := &rbacv1.Role{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      openclaw.Name + "-gateway-job-reader",
+					Namespace: openclaw.Namespace,
+				},
+				Rules: []rbacv1.PolicyRule{
+					{
+						APIGroups: []string{"batch"},
+						Resources: []string{"jobs"},
+						Verbs:     []string{"get", "list", "watch"},
+					},
+				},
+			}
+			roleFound := &rbacv1.Role{}
+			err = r.Get(ctx, client.ObjectKeyFromObject(role), roleFound)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					logger.Info("Creating a new Role.", "Role.Namespace", role.Namespace, "Role.Name", role.Name)
+					err = r.Create(ctx, role)
+					if err != nil {
+						logger.Error(err, "Failed to create new Role.", "Role.Namespace", role.Namespace, "Role.Name", role.Name)
+						return ctrl.Result{}, err
+					}
+				} else {
+					logger.Error(err, "Failed to get Role.")
+					return ctrl.Result{}, err
+				}
+			}
+
+			logger.Info("Creating a new RoleBinding.", "RoleBinding.Namespace", roleBinding.Namespace, "RoleBinding.Name", roleBinding.Name)
+			err = r.Create(ctx, roleBinding)
+			if err != nil {
+				logger.Error(err, "Failed to create new RoleBinding.", "RoleBinding.Namespace", roleBinding.Namespace, "RoleBinding.Name", roleBinding.Name)
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+		logger.Error(err, "Failed to get RoleBinding.")
 		return ctrl.Result{}, err
 	}
 
@@ -231,7 +318,7 @@ func (r *OpenclawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	err = r.Status().Update(ctx, openclaw)
-	if err != nil {
+	if err != nil && !errors.IsNotFound(err) {
 		logger.Error(err, "Failed to update Openclaw status.")
 		return ctrl.Result{}, err
 	}
@@ -325,6 +412,10 @@ func (r *OpenclawReconciler) jobForOpenclaw(m *openclawiov1.Openclaw) *batchv1.J
 		isPrivacy = "true"
 	}
 
+	b := make([]byte, 32)
+	rand.Read(b)
+	sensitiveToken := hex.EncodeToString(b)
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-onboard",
@@ -400,12 +491,37 @@ openclaw onboard --non-interactive \
   --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
   --gateway-port ` + fmt.Sprintf("%d", m.Spec.GatewayPort) + ` \
   --gateway-bind ` + m.Spec.GatewayBind + ` \
-  --accept-risk
+  --accept-risk \
+  --skip-health
 
 if [ "` + isPrivacy + `" = "true" ]; then
 	echo "Installing hermitcrab plugin..."
     openclaw plugins install /plugin/hermitcrab/
-    echo "Installed hermitcrab plugin"
+	echo "Enabling hermitcrab plugin..."
+	openclaw plugins enable hermitcrab
+	echo "Initializing hermitcrab plugin config..."
+	openclaw config set 'plugins.entries.hermitcrab' '{
+        "enabled": true,
+        "config": {
+          "token": {
+            "secret": "` + sensitiveToken + `"
+          },
+          "llm": {
+            "baseUrl": "` + m.Spec.SLMAPIURL + `",
+            "apiKey": "` + m.Spec.SLMAPIKey + `",
+            "model": "` + m.Spec.SLMModelID + `"
+          },
+          "profile": {
+            "enabled": true,
+            "trustThreshold": 0.8
+          },
+          "riskThresholds": {
+            "autoAllow": "LOW",
+            "humanReview": ["MEDIUM", "HIGH"]
+          }
+        }
+      }' --json
+	echo "Installed hermitcrab plugin"
 fi
 
 echo "Openclaw Instance Initialized Successfully"
@@ -460,6 +576,7 @@ func (r *OpenclawReconciler) statefulSetForOpenclaw(m *openclawiov1.Openclaw) *a
 					Labels: map[string]string{"app": m.Name + "-gateway"},
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: m.Name + "-gateway",
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup: func(i int64) *int64 { return &i }(1000),
 					},
@@ -471,12 +588,40 @@ func (r *OpenclawReconciler) statefulSetForOpenclaw(m *openclawiov1.Openclaw) *a
 							Command:         []string{"/bin/sh", "-lc"},
 							Args: []string{
 								`set -eu
-echo "Waiting for openclaw.json to be created by onboard job..."
-while [ ! -f /root/.openclaw/openclaw.json ]; do
-  echo "openclaw.json not found, waiting..."
+echo "Waiting for onboard job to complete..."
+JOB_NAME="` + m.Name + `-onboard"
+NAMESPACE="` + m.Namespace + `"
+MAX_WAIT_TIME=600
+ELAPSED=0
+
+# Get token and CA cert for in-cluster access
+TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+APISERVER=https://kubernetes.default.svc
+
+while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
+  # Check if job succeeded via Kubernetes API
+  RESPONSE=$(curl -s -k -H "Authorization: Bearer $TOKEN" "$APISERVER/apis/batch/v1/namespaces/$NAMESPACE/jobs/$JOB_NAME" 2>/dev/null || echo "{}")
+  SUCCEEDED=$(echo "$RESPONSE" | grep -o '"succeeded":[^,}]*' | grep -o '[0-9]*' || echo "0")
+  FAILED=$(echo "$RESPONSE" | grep -o '"failed":[^,}]*' | grep -o '[0-9]*' || echo "0")
+  
+  if [ "$SUCCEEDED" != "" ] && [ "$SUCCEEDED" -ge 1 ]; then
+    echo "Onboard job completed successfully!"
+    exit 0
+  fi
+  
+  if [ "$FAILED" != "" ] && [ "$FAILED" -ge 1 ]; then
+    echo "Onboard job failed!"
+    exit 1
+  fi
+  
+  echo "Onboard job not completed yet, waiting..."
   sleep 5
+  ELAPSED=$((ELAPSED + 5))
 done
-echo "openclaw.json found, onboard job completed!"`,
+
+echo "Timeout waiting for onboard job to complete!"
+exit 1`,
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -570,7 +715,7 @@ exec openclaw gateway`,
 						},
 						{
 							Name:            "config-reloader",
-							Image:           "10.29.15.63/ghcr.m.daocloud.io/openclaw/config-reloader:v0.6",
+							Image:           "10.29.15.63/ghcr.m.daocloud.io/openclaw/config-reloader:v0.9",
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -659,7 +804,7 @@ exec openclaw gateway`,
 }
 
 func (r *OpenclawReconciler) deploymentForConchProxy(m *openclawiov1.Openclaw) *appsv1.Deployment {
-	replicas := int32(2)
+	replicas := int32(1)
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -679,7 +824,7 @@ func (r *OpenclawReconciler) deploymentForConchProxy(m *openclawiov1.Openclaw) *
 					Containers: []corev1.Container{
 						{
 							Name:            "conch-proxy",
-							Image:           "10.29.15.63/ghcr.m.daocloud.io/openclaw/conch-proxy:v0.0.1",
+							Image:           "10.29.15.63/ghcr.m.daocloud.io/openclaw/conch-proxy:v0.1.0",
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Ports: []corev1.ContainerPort{
 								{
@@ -738,6 +883,18 @@ func (r *OpenclawReconciler) deploymentForConchProxy(m *openclawiov1.Openclaw) *
 											Key:                  "sensitive-token",
 										},
 									},
+								},
+								{
+									Name:  "REDIS_ADDR",
+									Value: m.Spec.Redis.Address,
+								},
+								{
+									Name:  "REDIS_PASSWORD",
+									Value: m.Spec.Redis.Password,
+								},
+								{
+									Name:  "REDIS_DB",
+									Value: strconv.Itoa(m.Spec.Redis.DB),
 								},
 								{
 									Name:  "UNLOCK_TTL_MINUTES",
@@ -1067,7 +1224,7 @@ func (r *OpenclawReconciler) createDefaultModels(ctx context.Context, openclaw *
 
 	if openclaw.Spec.Privacy != nil && *openclaw.Spec.Privacy {
 		apikey = fmt.Sprintf("sk-%s-conch-proxy-apikey", openclaw.Name)
-		baseURL = fmt.Sprintf("%s-conch-proxy.%s.svc.cluster.local:80", openclaw.Name, openclaw.Namespace)
+		baseURL = fmt.Sprintf("http://%s-conch-proxy.%s.svc.cluster.local:80/v1", openclaw.Name, openclaw.Namespace)
 	}
 
 	providers := []openclawiov1.Provider{
@@ -1190,6 +1347,7 @@ func (r *OpenclawReconciler) createDefaultAllowedOrigins(ctx context.Context, op
 				},
 				Origin:  origin,
 				Enabled: true,
+				UseHTTP: true,
 			},
 		}
 
