@@ -10,11 +10,11 @@ spec:
   gatewayPort: 18789
   gatewayBind: lan
   privacy: true
-  customApiKey: "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi"
-  customBaseUrl: "https://cdn.12ai.org/v1"
+  customApiKey: "<your api key>"
+  customBaseUrl: "<your ai baseurl>"
   customModelId: "qwen3.5-plus"
-  slmApiKey: "sk-3ZxkdrTPafm91JQ0jkbZdAmd3VzncwbCpJ2E5tD2avLdwZDi"
-  slmApiUrl: "https://cdn.12ai.org/v1"
+  slmApiKey: "<your api key>"
+  slmApiUrl: "<your ai baseurl>"
   slmModelId: "deepseek-v3.2"
   customProviderId: "ppnb"
   customCompatibility: openai
